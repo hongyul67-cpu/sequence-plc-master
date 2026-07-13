@@ -107,13 +107,6 @@
   .mode-card{position:relative;}
   .card-check{position:absolute;top:10px;right:12px;font-size:1.15rem;color:var(--live);font-weight:800;}
   .card-badge{display:inline-block;margin-top:8px;font-size:0.8rem;font-weight:700;color:var(--live);}
-  .gate-overlay{position:fixed;inset:0;background:rgba(4,12,24,0.9);display:flex;align-items:center;justify-content:center;z-index:100;padding:20px;}
-  .gate-box{background:var(--panel);border:1px solid rgba(234,244,255,0.16);border-radius:16px;padding:26px 24px;max-width:360px;width:100%;text-align:center;}
-  .gate-box h2{margin:0 0 6px;font-size:1.25rem;}
-  .gate-box p{color:var(--text-dim);font-size:0.9rem;line-height:1.5;margin:0 0 16px;}
-  .gate-row{display:flex;gap:8px;margin-bottom:10px;}
-  .gate-input{flex:1;background:var(--bg-deep);border:1px solid rgba(234,244,255,0.2);border-radius:8px;color:var(--text);padding:12px;font-size:1rem;width:100%;}
-  .gate-input:focus{outline:none;border-color:var(--accent);}
 </style>
 </head>
 <body>
@@ -208,35 +201,25 @@
         <button class="btn secondary" onclick="goStart()">단계 선택으로</button>
         <button class="btn" id="done-retry">다시 하기</button>
       </div>
+      <div id="done-submit-row" class="nextrow" style="justify-content:center;margin-top:6px;">
+        <button class="btn" style="background:var(--live);color:#06210d" onclick="submitResult()">📤 선생님께 결과 제출</button>
+      </div>
     </div>
   </div>
 </div>
 
-<div id="gate-overlay" class="gate-overlay hidden">
-  <div class="gate-box">
-    <h2>👋 학습 시작</h2>
-    <p>기록을 위해 반·번호·이름을 적어주세요.<br><span style="font-size:0.82rem">(교사 확인용 — 이 기기에 저장돼요)</span></p>
-    <div class="gate-row">
-      <input id="gate-cls" class="gate-input" placeholder="반" inputmode="numeric" maxlength="6">
-      <input id="gate-num" class="gate-input" placeholder="번호" inputmode="numeric" maxlength="6">
-    </div>
-    <input id="gate-name" class="gate-input" placeholder="이름 (또는 별명)" maxlength="20" style="margin-bottom:14px">
-    <button class="btn" style="width:100%" onclick="submitGate()">시작하기</button>
-  </div>
-</div>
+<!-- 결과 수집 위젯(범용). 교사는 결과수집 링크 생성기로 만든 ?rc=... 링크로 시트를 연결해요. -->
+<script src="https://hongyul67-cpu.github.io/result-collector/collector.js" data-tool="시퀀스PLC 학습게임" data-max-num="40"></script>
 
 <script>
 function shuffle(arr){ const a=arr.slice(); for(let i=a.length-1;i>0;i--){const j=Math.floor(Math.random()*(i+1)); [a[i],a[j]]=[a[j],a[i]];} return a; }
 
-/* ============ 진도 저장 & 교사 기록 ============
-   교사: 아래 LOG_ENDPOINT '' 안에 Google Apps Script 웹앱 URL을 넣으면,
-         학생이 단계를 완료할 때마다 교사 구글 시트에 자동 기록돼요.
-         비워두면 '개인용'(기록 안 함) — 이어하기 저장만 동작해요. */
-let LOG_ENDPOINT = '';
+/* ============ 진도 저장(이어하기) & 결과 제출 ============
+   - 이어하기: localStorage에 단계별 완료·최고점수 저장 (개인용, 로그인 없음)
+   - 제출: result-collector 위젯(collector.js)으로 교사 구글시트에 전송.
+           교사는 결과수집 링크 생성기(result-collector)로 만든 ?rc=... 링크를 학생에게 나눠줘요. */
 const PROG_KEY = 'seqplc_progress_v2';
-const STAGE_TITLES = {1:'제어반 배선',2:'회로 실습',3:'자기유지·정역',4:'래더·PLC',5:'주회로 배선',6:'PLC 기본',7:'XG5000 래더',8:'응용 회로'};
-function activeEndpoint(){ return ((window.LOG_ENDPOINT_OVERRIDE || LOG_ENDPOINT) || '').trim(); }
-function loadProg(){ try{ return JSON.parse(localStorage.getItem(PROG_KEY)) || {student:null,stages:{}}; }catch(e){ return {student:null,stages:{}}; } }
+function loadProg(){ try{ return JSON.parse(localStorage.getItem(PROG_KEY)) || {stages:{}}; }catch(e){ return {stages:{}}; } }
 function saveProg(){ try{ localStorage.setItem(PROG_KEY, JSON.stringify(PROG)); }catch(e){} }
 let PROG = loadProg();
 function nowStr(){ const d=new Date(), p=n=>String(n).padStart(2,'0'); return `${d.getFullYear()}-${p(d.getMonth()+1)}-${p(d.getDate())} ${p(d.getHours())}:${p(d.getMinutes())}`; }
@@ -244,35 +227,21 @@ function recordStage(stage, sc, correct, total, combo){
   const k=String(stage), prev=PROG.stages[k];
   PROG.stages[k]={done:true, best:Math.max(sc, prev?prev.best:0), correct, total, combo, at:nowStr()};
   saveProg();
-  logToSheet(stage, sc, correct, total, combo);
 }
-function logToSheet(stage, sc, correct, total, combo){
-  const ep=activeEndpoint();
-  if(!ep || !PROG.student) return;
-  const s=PROG.student;
-  const payload={cls:s.cls, num:s.num, name:s.name, stage, stageName:STAGE_TITLES[stage]||'', score:sc, correct, total, combo, at:nowStr()};
-  try{ fetch(ep, {method:'POST', mode:'no-cors', body:JSON.stringify(payload)}).catch(()=>{}); }catch(e){}
+function progTotals(){
+  let score=0, correct=0, total=0, done=0;
+  for(let i=1;i<=8;i++){ const s=PROG.stages[String(i)]; if(s&&s.done){ score+=s.best; correct+=s.correct; total+=s.total; done++; } }
+  return {score, correct, total, done};
 }
-function needGate(){ return !!activeEndpoint() && !PROG.student; }
-function showGate(prefill){
-  const ov=document.getElementById('gate-overlay'); if(!ov) return;
-  if(prefill && PROG.student){
-    document.getElementById('gate-cls').value=PROG.student.cls||'';
-    document.getElementById('gate-num').value=PROG.student.num||'';
-    document.getElementById('gate-name').value=PROG.student.name||'';
-  }
-  ov.classList.remove('hidden');
+function hasRC(){ return !!(window.ResultCollector && window.ResultCollector.config && window.ResultCollector.config.endpoint); }
+function submitResult(){
+  const t=progTotals();
+  if(t.done===0){ alert('먼저 한 단계 이상 완료한 뒤 제출할 수 있어요!'); return; }
+  if(!window.ResultCollector){ alert('제출하려면 인터넷 연결이 필요해요. 잠시 후 다시 시도해 주세요.'); return; }
+  if(!hasRC()){ alert('이 링크로는 제출할 수 없어요.\n선생님이 나눠준 "제출 링크"로 들어와 주세요.'); return; }
+  // score=누적 총점 / correct·total=완료한 단계 합계(총문항이 완료 정도를 보여줌, 최대 60)
+  window.ResultCollector.open({ score:t.score, correct:t.correct, total:t.total });
 }
-function submitGate(){
-  const cls=document.getElementById('gate-cls').value.trim();
-  const num=document.getElementById('gate-num').value.trim();
-  const name=document.getElementById('gate-name').value.trim();
-  if(!name){ document.getElementById('gate-name').focus(); return; }
-  PROG.student={cls,num,name}; saveProg();
-  document.getElementById('gate-overlay').classList.add('hidden');
-  renderStartProgress();
-}
-function changeStudent(){ showGate(true); }
 function findNextStage(){ for(let i=1;i<=8;i++){ const s=PROG.stages[String(i)]; if(!(s&&s.done)) return i; } return null; }
 function renderStartProgress(){
   const cards=document.querySelectorAll('.mode-card');
@@ -288,13 +257,12 @@ function renderStartProgress(){
   });
   const box=document.getElementById('start-progress'); if(!box) return;
   const nx=findNextStage();
-  const who=PROG.student?`${PROG.student.cls?PROG.student.cls+' ':''}${PROG.student.num?PROG.student.num+'번 ':''}${PROG.student.name}`:'';
   const label = done===0 ? (nx?`▶ 시작 (단계 ${nx})`:'') : (nx?`▶ 이어하기 (단계 ${nx})`:'🎉 전 단계 완료!');
   box.innerHTML =
-    `<div>${who?`<span class="who">${who}</span> · `:''}<span class="stat">${done}/${cards.length} 단계 완료 · 총점 ${total}점</span></div>`+
+    `<div><span class="stat">${done}/${cards.length} 단계 완료 · 총점 ${total}점</span></div>`+
     `<div style="display:flex;gap:10px;align-items:center;flex-wrap:wrap">`+
       (nx?`<button class="btn" style="padding:8px 16px;min-height:0" onclick="goMode(${nx})">${label}</button>`:`<span class="stat" style="color:var(--live);font-weight:700">${label}</span>`)+
-      (PROG.student?`<button class="mini-link" onclick="changeStudent()">이름 변경</button>`:'')+
+      (done>0&&hasRC()?`<button class="btn secondary" style="padding:8px 16px;min-height:0" onclick="submitResult()">📤 선생님께 제출</button>`:'')+
     `</div>`;
 }
 
@@ -584,6 +552,7 @@ function stgNext(){
       document.getElementById('done-note').innerText = STAGE_META[curStage].doneMsg;
       document.getElementById('done-score').textContent = `점수 ${score}점 · 정답 ${correctCount}/${totalSteps} · 최고 콤보 ${bestCombo}`;
       recordStage(curStage, score, correctCount, totalSteps, bestCombo);
+      document.getElementById('done-submit-row').style.display = hasRC() ? '' : 'none';
       sndFanfare();
       return;
     }
@@ -1335,9 +1304,8 @@ function buildAppStep(){
   });
 }
 
-/* ============ 초기화: 학생 게이트 + 시작화면 진도 표시 ============ */
+/* ============ 초기화: 시작화면 진도 표시 ============ */
 renderStartProgress();
-if(needGate()) showGate(false);
 
 
 
